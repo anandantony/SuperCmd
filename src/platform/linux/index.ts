@@ -7,6 +7,8 @@ import { ColorPickerAPI } from '../interfaces/color-picker';
 import { WindowManagerAPI } from '../interfaces/window-manager';
 import { AccessibilityAPI } from '../interfaces/accessibility';
 import { SystemAPI } from '../interfaces/system';
+import { CommandsDiscoveryAPI } from '../interfaces/commands-discovery';
+import { shell } from 'electron';
 
 class LinuxClipboard implements ClipboardAPI {
   async read(): Promise<string> { throw new Error('Not implemented on Linux'); }
@@ -34,6 +36,11 @@ class LinuxSpeech implements SpeechAPI {
   async requestMicrophoneAccess(prompt: boolean): Promise<import('../interfaces/speech').MicrophonePermissionResult | null> {
     return { granted: true, requested: false, status: 'granted', canPrompt: false };
   }
+  async ensureSpeechRecognitionAccess(): Promise<import('../interfaces/speech').SpeechRecognitionPermissionResult> {
+    return { granted: true, requested: false, speechStatus: 'granted', microphoneStatus: 'granted' };
+  }
+  async startNativeTranscription(): Promise<void> { throw new Error('Not implemented on Linux'); }
+  async stopNativeTranscription(): Promise<void> {}
 }
 
 class LinuxTTS implements TTSAPI {
@@ -43,12 +50,10 @@ class LinuxTTS implements TTSAPI {
 }
 
 class LinuxColorPicker implements ColorPickerAPI {
-  async pickColor(): Promise<string | null> { throw new Error('Not implemented on Linux'); }
+  async pickColor(): Promise<import('../interfaces/color-picker').PickedColor | null> { return null; }
 }
 
 class LinuxWindowManager implements WindowManagerAPI {
-  async getActiveWindow(): Promise<any> { throw new Error('Not implemented on Linux'); }
-  async getWindows(): Promise<any[]> { return []; }
   async setWindowBounds(windowId: string, bounds: { x: number, y: number, width: number, height: number }): Promise<void> {}
   async executeWindowAdjustByAction(action: string, targetHint?: any): Promise<boolean | null> {
     return null;
@@ -58,6 +63,8 @@ class LinuxWindowManager implements WindowManagerAPI {
 class LinuxAccessibility implements AccessibilityAPI {
   async getSelectedText(): Promise<string> { throw new Error('Not implemented on Linux'); }
   async getSelectedFinderItems(): Promise<string[]> { throw new Error('Not implemented on Linux'); }
+  async checkInputMonitoringAccess(): Promise<boolean> { return true; }
+  async requestInputMonitoringAccess(): Promise<boolean> { return true; }
 }
 
 class LinuxSystem implements SystemAPI {
@@ -72,6 +79,15 @@ class LinuxSystem implements SystemAPI {
   async openSettingsPane(identifier: string): Promise<void> { throw new Error('Not implemented on Linux'); }
 }
 
+class LinuxCommandsDiscovery implements CommandsDiscoveryAPI {
+  async discoverApplications(): Promise<any[]> { return []; }
+  async discoverSystemSettings(): Promise<any[]> { return []; }
+  async getAppIcon(bundlePath: string): Promise<string | undefined> { return undefined; }
+  async batchExtractIcons(bundlePaths: string[]): Promise<Map<string, string>> { return new Map(); }
+  async readBundleInfo(bundlePath: string): Promise<Record<string, any> | null> { return null; }
+  async openApplication(appPath: string): Promise<void> { await shell.openPath(appPath); }
+}
+
 export const platform: Platform = {
   clipboard: new LinuxClipboard(),
   hotkeys: new LinuxHotkeys(),
@@ -81,6 +97,7 @@ export const platform: Platform = {
   windowManager: new LinuxWindowManager(),
   accessibility: new LinuxAccessibility(),
   system: new LinuxSystem(),
+  commandsDiscovery: new LinuxCommandsDiscovery(),
 };
 
 export type { MicrophonePermissionResult } from '../interfaces/speech';

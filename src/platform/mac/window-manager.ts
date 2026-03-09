@@ -12,19 +12,6 @@ function getNativeBinaryPath(name: string): string {
 }
 
 class MacWindowManager implements WindowManagerAPI {
-  // main.ts implements a complex custom window manager polling system via a worker
-  // thread (window-manager-worker.js) for list-windows and get-active-window.
-  // This platform abstraction focuses on the 'setWindowBounds' mutating action
-  // which uses the Swift window-adjust native binary.
-
-  async getActiveWindow(): Promise<any> {
-    throw new Error('getActiveWindow should be routed through the window-manager-worker in main.ts');
-  }
-
-  async getWindows(): Promise<any[]> {
-    throw new Error('getWindows should be routed through the window-manager-worker in main.ts');
-  }
-
   async setWindowBounds(windowId: string, bounds: { x: number, y: number, width: number, height: number }): Promise<void> {
     try {
       const binPath = getNativeBinaryPath('window-adjust');

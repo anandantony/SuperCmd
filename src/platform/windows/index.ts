@@ -7,6 +7,8 @@ import { ColorPickerAPI } from '../interfaces/color-picker';
 import { WindowManagerAPI } from '../interfaces/window-manager';
 import { AccessibilityAPI } from '../interfaces/accessibility';
 import { SystemAPI } from '../interfaces/system';
+import { CommandsDiscoveryAPI } from '../interfaces/commands-discovery';
+import { shell } from 'electron';
 
 class WindowsClipboard implements ClipboardAPI {
   async read(): Promise<string> { throw new Error('Not implemented on Windows'); }
@@ -34,6 +36,11 @@ class WindowsSpeech implements SpeechAPI {
   async requestMicrophoneAccess(prompt: boolean): Promise<import('../interfaces/speech').MicrophonePermissionResult | null> {
     return { granted: true, requested: false, status: 'granted', canPrompt: false };
   }
+  async ensureSpeechRecognitionAccess(): Promise<import('../interfaces/speech').SpeechRecognitionPermissionResult> {
+    return { granted: true, requested: false, speechStatus: 'granted', microphoneStatus: 'granted' };
+  }
+  async startNativeTranscription(): Promise<void> { throw new Error('Not implemented on Windows'); }
+  async stopNativeTranscription(): Promise<void> {}
 }
 
 class WindowsTTS implements TTSAPI {
@@ -43,12 +50,10 @@ class WindowsTTS implements TTSAPI {
 }
 
 class WindowsColorPicker implements ColorPickerAPI {
-  async pickColor(): Promise<string | null> { throw new Error('Not implemented on Windows'); }
+  async pickColor(): Promise<import('../interfaces/color-picker').PickedColor | null> { return null; }
 }
 
 class WindowsWindowManager implements WindowManagerAPI {
-  async getActiveWindow(): Promise<any> { throw new Error('Not implemented on Windows'); }
-  async getWindows(): Promise<any[]> { return []; }
   async setWindowBounds(windowId: string, bounds: { x: number, y: number, width: number, height: number }): Promise<void> {}
   async executeWindowAdjustByAction(action: string, targetHint?: any): Promise<boolean | null> {
     return null;
@@ -58,6 +63,8 @@ class WindowsWindowManager implements WindowManagerAPI {
 class WindowsAccessibility implements AccessibilityAPI {
   async getSelectedText(): Promise<string> { throw new Error('Not implemented on Windows'); }
   async getSelectedFinderItems(): Promise<string[]> { throw new Error('Not implemented on Windows'); }
+  async checkInputMonitoringAccess(): Promise<boolean> { return true; }
+  async requestInputMonitoringAccess(): Promise<boolean> { return true; }
 }
 
 class WindowsSystem implements SystemAPI {
@@ -72,6 +79,15 @@ class WindowsSystem implements SystemAPI {
   async openSettingsPane(identifier: string): Promise<void> { throw new Error('Not implemented on Windows'); }
 }
 
+class WindowsCommandsDiscovery implements CommandsDiscoveryAPI {
+  async discoverApplications(): Promise<any[]> { return []; }
+  async discoverSystemSettings(): Promise<any[]> { return []; }
+  async getAppIcon(bundlePath: string): Promise<string | undefined> { return undefined; }
+  async batchExtractIcons(bundlePaths: string[]): Promise<Map<string, string>> { return new Map(); }
+  async readBundleInfo(bundlePath: string): Promise<Record<string, any> | null> { return null; }
+  async openApplication(appPath: string): Promise<void> { await shell.openPath(appPath); }
+}
+
 export const platform: Platform = {
   clipboard: new WindowsClipboard(),
   hotkeys: new WindowsHotkeys(),
@@ -81,6 +97,7 @@ export const platform: Platform = {
   windowManager: new WindowsWindowManager(),
   accessibility: new WindowsAccessibility(),
   system: new WindowsSystem(),
+  commandsDiscovery: new WindowsCommandsDiscovery(),
 };
 
 export type { MicrophonePermissionResult } from '../interfaces/speech';

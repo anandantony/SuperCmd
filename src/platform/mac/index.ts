@@ -7,6 +7,7 @@ import { macColorPicker } from './color-picker';
 import { macWindowManager } from './window-manager';
 import { macAccessibility } from './accessibility';
 import { macSystem } from './system';
+import { macCommandsDiscovery } from './commands-discovery';
 
 export const platform: Platform = {
   clipboard: macClipboard,
@@ -17,6 +18,7 @@ export const platform: Platform = {
   windowManager: macWindowManager,
   accessibility: macAccessibility,
   system: macSystem,
+  commandsDiscovery: macCommandsDiscovery,
 };
 
 export type { MicrophonePermissionResult } from '../interfaces/speech';

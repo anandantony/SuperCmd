@@ -6,6 +6,7 @@ import { ColorPickerAPI } from './color-picker';
 import { WindowManagerAPI } from './window-manager';
 import { AccessibilityAPI } from './accessibility';
 import { SystemAPI } from './system';
+import { CommandsDiscoveryAPI } from './commands-discovery';
 
 export interface Platform {
   clipboard: ClipboardAPI;
@@ -16,4 +17,5 @@ export interface Platform {
   windowManager: WindowManagerAPI;
   accessibility: AccessibilityAPI;
   system: SystemAPI;
+  commandsDiscovery: CommandsDiscoveryAPI;
 }

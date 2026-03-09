@@ -4,8 +4,9 @@ const path = require('path');
 
 const targetOS = process.env.TARGET_OS;
 
-if (targetOS !== 'mac') {
-  console.log(`Skipping native build for target OS: ${targetOS}`);
+// Native Swift compilation can only run on macOS
+if (targetOS !== 'mac' || process.platform !== 'darwin') {
+  console.log(`Skipping native build (TARGET_OS=${targetOS}, host=${process.platform})`);
   process.exit(0);
 }
 

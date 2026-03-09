@@ -2587,81 +2587,9 @@ async function ensureMicrophoneAccess(prompt = true): Promise<import('@platform'
   };
 }
 
-function ensureInputMonitoringRequestBinary(): string | null {
-  const fs = require('fs') as typeof import('fs');
-  const binaryPath = getNativeBinaryPath('input-monitoring-request');
-  if (fs.existsSync(binaryPath)) return binaryPath;
-  try {
-    const { execFileSync } = require('child_process') as typeof import('child_process');
-    const sourceCandidates = [
-      path.join(app.getAppPath(), 'src', 'native', 'input-monitoring-request.swift'),
-      path.join(process.cwd(), 'src', 'native', 'input-monitoring-request.swift'),
-      path.join(__dirname, '..', '..', 'src', 'native', 'input-monitoring-request.swift'),
-    ];
-    const sourcePath = sourceCandidates.find((candidate) => fs.existsSync(candidate));
-    if (!sourcePath) return null;
-    fs.mkdirSync(path.dirname(binaryPath), { recursive: true });
-    execFileSync('swiftc', [
-      '-O',
-      '-o',
-      binaryPath,
-      sourcePath,
-      '-framework',
-      'CoreGraphics',
-    ]);
-    return binaryPath;
-  } catch {
-    return null;
-  }
-}
-
 async function checkInputMonitoringAccess(): Promise<boolean> {
   if (process.platform !== 'darwin') return true;
-  const binaryPath = ensureInputMonitoringRequestBinary();
-  if (!binaryPath) return false;
-  const { spawn } = require('child_process') as typeof import('child_process');
-  return await new Promise<boolean>((resolve) => {
-    const proc = spawn(binaryPath, ['--check'], { stdio: ['ignore', 'pipe', 'ignore'] });
-    let stdout = '';
-    let settled = false;
-    const settle = (value: boolean) => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-    };
-
-    const timeout = setTimeout(() => {
-      try { proc.kill('SIGTERM'); } catch {}
-      settle(false);
-    }, 1400);
-
-    proc.stdout.on('data', (chunk: Buffer | string) => {
-      stdout += String(chunk || '');
-    });
-
-    proc.on('error', () => {
-      clearTimeout(timeout);
-      settle(false);
-    });
-
-    proc.on('close', () => {
-      clearTimeout(timeout);
-      const lines = stdout
-        .split('\n')
-        .map((line: string) => line.trim())
-        .filter(Boolean);
-      for (let i = lines.length - 1; i >= 0; i -= 1) {
-        try {
-          const payload = JSON.parse(lines[i]);
-          if (typeof payload?.granted === 'boolean') {
-            settle(Boolean(payload.granted));
-            return;
-          }
-        } catch {}
-      }
-      settle(false);
-    });
-  });
+  return platform.accessibility.checkInputMonitoringAccess();
 }
 
 async function requestOnboardingPermissionAccess(target: OnboardingPermissionTarget): Promise<OnboardingPermissionResult> {
@@ -2810,21 +2738,19 @@ async function requestOnboardingPermissionAccess(target: OnboardingPermissionTar
       canPrompt: false,
     };
   }
-  const binaryPath = ensureInputMonitoringRequestBinary();
-  if (binaryPath) {
-    try {
-      const { spawn } = require('child_process') as typeof import('child_process');
-      // Detached — exits on its own (0.5 s on success, 3.5 s on failure).
-      spawn(binaryPath, [], { stdio: ['ignore', 'ignore', 'ignore'], detached: true }).unref();
-    } catch {}
-  }
+  // Fire-and-forget the request — the user will need to manually toggle in System Settings.
+  let requested = false;
+  try {
+    requested = true;
+    platform.accessibility.requestInputMonitoringAccess().catch(() => {});
+  } catch {}
   return {
     granted: false,
-    requested: Boolean(binaryPath),
+    requested,
     mode: 'manual',
     status: 'not-determined',
     canPrompt: true,
-    error: binaryPath
+    error: requested
       ? undefined
       : 'Could not prepare Input Monitoring helper. Open System Settings -> Privacy & Security -> Input Monitoring and add SuperCmd manually.',
   };
@@ -3143,135 +3069,17 @@ async function ensureSpeechRecognitionAccess(prompt = true): Promise<SpeechRecog
     };
   }
 
-  if (!prompt) {
-    return {
-      granted: false,
-      requested: false,
-      speechStatus: 'unknown',
-      microphoneStatus: readMicrophoneAccessStatus(),
-    };
-  }
-
-  const fs = require('fs');
-  const binaryPath = getNativeBinaryPath('speech-recognizer');
-  if (!fs.existsSync(binaryPath)) {
-    return {
-      granted: false,
-      requested: false,
-      speechStatus: 'unknown',
-      microphoneStatus: readMicrophoneAccessStatus(),
-      error: 'Speech recognizer helper is missing. Reinstall SuperCmd and retry.',
-    };
-  }
-
   const settings = loadSettings();
   const language = String(settings.ai?.speechLanguage || 'en-US').trim() || 'en-US';
 
-  return await new Promise<SpeechRecognitionPermissionResult>((resolve) => {
-    const { spawn } = require('child_process');
-    const proc = spawn(binaryPath, [language, '--auth-only'], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let settled = false;
-    let stdoutBuffer = '';
-    let stderrBuffer = '';
-    let helperError = '';
-    let speechStatus: MicrophoneAccessStatus = 'unknown';
-    let microphoneStatus: MicrophoneAccessStatus = readMicrophoneAccessStatus();
-    let timeout: NodeJS.Timeout | null = null;
-
-    const finalize = (result: SpeechRecognitionPermissionResult) => {
-      if (settled) return;
-      settled = true;
-      if (timeout) clearTimeout(timeout);
-      resolve(result);
-    };
-
-    const parseLine = (line: string) => {
-      const trimmed = String(line || '').trim();
-      if (!trimmed) return;
-      try {
-        const payload = JSON.parse(trimmed) as any;
-        if (payload?.speechStatus !== undefined) {
-          speechStatus = normalizePermissionStatus(payload.speechStatus);
-        }
-        if (payload?.microphoneStatus !== undefined) {
-          microphoneStatus = normalizePermissionStatus(payload.microphoneStatus);
-        }
-        if (payload?.authorized === true) {
-          speechStatus = 'granted';
-          if (microphoneStatus === 'unknown') {
-            microphoneStatus = 'granted';
-          }
-        }
-        if (payload?.error) {
-          helperError = String(payload.error || '').trim();
-        }
-      } catch {}
-    };
-
-    proc.stdout.on('data', (chunk: Buffer | string) => {
-      stdoutBuffer += String(chunk || '');
-      const lines = stdoutBuffer.split('\n');
-      stdoutBuffer = lines.pop() || '';
-      for (const line of lines) {
-        parseLine(line);
-      }
-    });
-
-    proc.stderr.on('data', (chunk: Buffer | string) => {
-      stderrBuffer += String(chunk || '');
-    });
-
-    proc.on('error', (error: Error) => {
-      finalize({
-        granted: false,
-        requested: false,
-        speechStatus,
-        microphoneStatus,
-        error: error.message || 'Failed to request speech recognition access.',
-      });
-    });
-
-    proc.on('close', (code: number | null) => {
-      if (stdoutBuffer.trim()) {
-        parseLine(stdoutBuffer.trim());
-      }
-      const finalMicStatus = microphoneStatus === 'unknown'
-        ? readMicrophoneAccessStatus()
-        : microphoneStatus;
-      const granted = speechStatus === 'granted';
-      let error = helperError || '';
-      if (!granted && !error) {
-        const stderr = stderrBuffer.trim();
-        if (stderr) {
-          error = stderr;
-        } else if (code && code !== 0) {
-          error = `Speech recognition permission check exited with code ${code}.`;
-        } else {
-          error = 'Speech recognition permission is required for Whisper.';
-        }
-      }
-      finalize({
-        granted,
-        requested: true,
-        speechStatus,
-        microphoneStatus: finalMicStatus,
-        error: error || undefined,
-      });
-    });
-
-    timeout = setTimeout(() => {
-      try { proc.kill('SIGTERM'); } catch {}
-      finalize({
-        granted: speechStatus === 'granted',
-        requested: true,
-        speechStatus,
-        microphoneStatus: readMicrophoneAccessStatus(),
-        error: helperError || 'Speech permission prompt timed out. Please allow access and retry.',
-      });
-    }, 15000);
-  });
+  const result = await platform.speech.ensureSpeechRecognitionAccess(prompt, language);
+  return {
+    granted: result.granted,
+    requested: result.requested,
+    speechStatus: result.speechStatus as MicrophoneAccessStatus,
+    microphoneStatus: result.microphoneStatus as MicrophoneAccessStatus,
+    error: result.error,
+  };
 }
 
 function resolveEdgeVoice(language?: string): string {
@@ -11146,84 +10954,26 @@ return appURL's |path|() as text`,
     if (isAIDisabledInSettings()) {
       throw new Error('AI is disabled. Enable AI in Settings -> AI to use Whisper.');
     }
-    // Kill any existing process
-    if (nativeSpeechProcess) {
-      try { nativeSpeechProcess.kill('SIGTERM'); } catch {}
-      nativeSpeechProcess = null;
-      nativeSpeechStdoutBuffer = '';
-    }
 
     const lang = language || loadSettings().ai.speechLanguage || 'en-US';
-    const binaryPath = getNativeBinaryPath('speech-recognizer');
-    const fs = require('fs');
 
-    // Compile on demand (same pattern as color-picker / snippet-expander)
-    if (!fs.existsSync(binaryPath)) {
-      try {
-        const { execFileSync } = require('child_process');
-        const sourcePath = path.join(app.getAppPath(), 'src', 'native', 'speech-recognizer.swift');
-        execFileSync('swiftc', [
-          '-O', '-o', binaryPath, sourcePath,
-          '-framework', 'Speech',
-          '-framework', 'AVFoundation',
-        ]);
-        console.log('[Whisper][native] Compiled speech-recognizer binary');
-      } catch (error) {
-        console.error('[Whisper][native] Compile failed:', error);
-        throw new Error('Failed to compile native speech recognizer. Ensure Xcode Command Line Tools are installed.');
+    await platform.speech.startNativeTranscription(
+      lang,
+      options,
+      (payload) => {
+        // Forward streaming chunks to renderer
+        try { event.sender.send('whisper-native-chunk', payload); } catch {}
+      },
+      (_code) => {
+        // Notify renderer that native recognition ended
+        try { event.sender.send('whisper-native-chunk', { ended: true }); } catch {}
       }
-    }
-
-    const { spawn } = require('child_process');
-    const args: string[] = [lang];
-    if (options?.singleUtterance) {
-      args.push('--single-utterance');
-    }
-
-    nativeSpeechProcess = spawn(binaryPath, args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    nativeSpeechStdoutBuffer = '';
-    console.log(`[Whisper][native] Started speech-recognizer (lang=${lang})`);
-
-    nativeSpeechProcess.stdout.on('data', (chunk: Buffer | string) => {
-      nativeSpeechStdoutBuffer += chunk.toString();
-      const lines = nativeSpeechStdoutBuffer.split('\n');
-      nativeSpeechStdoutBuffer = lines.pop() || '';
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        try {
-          const payload = JSON.parse(trimmed);
-          // Forward to renderer
-          event.sender.send('whisper-native-chunk', payload);
-        } catch {
-          // ignore malformed lines
-        }
-      }
-    });
-
-    nativeSpeechProcess.stderr.on('data', (chunk: Buffer | string) => {
-      const text = chunk.toString().trim();
-      if (text) console.warn('[Whisper][native]', text);
-    });
-
-    nativeSpeechProcess.on('exit', (code: number | null) => {
-      console.log(`[Whisper][native] Process exited (code=${code})`);
-      nativeSpeechProcess = null;
-      nativeSpeechStdoutBuffer = '';
-      // Notify renderer that native recognition ended
-      try { event.sender.send('whisper-native-chunk', { ended: true }); } catch {}
-    });
+    );
     }
   );
 
   ipcMain.handle('whisper-stop-native', async () => {
-    if (nativeSpeechProcess) {
-      try { nativeSpeechProcess.kill('SIGTERM'); } catch {}
-      nativeSpeechProcess = null;
-      nativeSpeechStdoutBuffer = '';
-    }
+    await platform.speech.stopNativeTranscription();
   });
 
   // ─── IPC: Ollama Model Management ──────────────────────────────
@@ -11677,89 +11427,13 @@ return appURL's |path|() as text`,
     }
 
     nativeColorPickerPromise = (async () => {
-    const { execFile, execFileSync } = require('child_process');
-    const fsNative = require('fs');
-    const colorPickerPath = getNativeBinaryPath('color-picker');
-
-    // Build on demand in development when binary artifacts are missing.
-    if (!fsNative.existsSync(colorPickerPath)) {
+      // Keep the launcher open while the native picker is focused.
+      suppressBlurHide = true;
       try {
-        const sourceCandidates = [
-          path.join(app.getAppPath(), 'src', 'native', 'color-picker.swift'),
-          path.join(process.cwd(), 'src', 'native', 'color-picker.swift'),
-          path.join(__dirname, '..', '..', 'src', 'native', 'color-picker.swift'),
-        ];
-        const sourcePath = sourceCandidates.find((candidate: string) => fsNative.existsSync(candidate));
-        if (!sourcePath) {
-          console.warn('[ColorPicker] Binary and source file not found.');
-          return null;
-        }
-        fsNative.mkdirSync(path.dirname(colorPickerPath), { recursive: true });
-        execFileSync('swiftc', ['-O', '-o', colorPickerPath, sourcePath, '-framework', 'AppKit']);
-      } catch (error) {
-        console.error('[ColorPicker] Failed to compile native helper:', error);
-        return null;
+        return await platform.colorPicker.pickColor();
+      } finally {
+        suppressBlurHide = false;
       }
-    }
-
-    // Keep the launcher open while the native picker is focused.
-    suppressBlurHide = true;
-    try {
-      const pickedColor = await new Promise((resolve) => {
-        execFile(colorPickerPath, (error: any, stdout: string) => {
-          if (error) {
-            console.error('Color picker failed:', error);
-            resolve(null);
-            return;
-          }
-
-          const trimmed = stdout.trim();
-          if (trimmed === 'null' || !trimmed) {
-            resolve(null);
-            return;
-          }
-
-          try {
-            const parsedColor = JSON.parse(trimmed);
-            if (!parsedColor || typeof parsedColor !== 'object') {
-              resolve(null);
-              return;
-            }
-
-            const toUnitRange = (value: unknown): number | null => {
-              const numeric = Number(value);
-              if (!Number.isFinite(numeric)) return null;
-              if (numeric > 1) {
-                const normalized = numeric / 255;
-                return Math.max(0, Math.min(1, normalized));
-              }
-              return Math.max(0, Math.min(1, numeric));
-            };
-
-            const red = toUnitRange((parsedColor as any).red);
-            const green = toUnitRange((parsedColor as any).green);
-            const blue = toUnitRange((parsedColor as any).blue);
-            const alpha = toUnitRange((parsedColor as any).alpha ?? 1);
-            if (red === null || green === null || blue === null || alpha === null) {
-              resolve(null);
-              return;
-            }
-
-            const colorSpace = typeof (parsedColor as any).colorSpace === 'string' && (parsedColor as any).colorSpace.trim()
-              ? String((parsedColor as any).colorSpace)
-              : 'srgb';
-
-            resolve({ red, green, blue, alpha, colorSpace });
-          } catch (e) {
-            console.error('Failed to parse color picker output:', e);
-            resolve(null);
-          }
-        });
-      });
-      return pickedColor;
-    } finally {
-      suppressBlurHide = false;
-    }
     })();
 
     try {

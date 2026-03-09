@@ -1,6 +1,4 @@
 export interface WindowManagerAPI {
-  getActiveWindow(): Promise<any>;
-  getWindows(): Promise<any[]>;
   setWindowBounds(windowId: string, bounds: { x: number, y: number, width: number, height: number }): Promise<void>;
   executeWindowAdjustByAction(
     action: string,
