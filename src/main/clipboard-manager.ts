@@ -9,39 +9,10 @@
  */
 
 import { app, clipboard, nativeImage } from 'electron';
-import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-
-/**
- * Write a GIF file to macOS pasteboard with file URL + GIF data + TIFF
- * fallback via NSPasteboard so apps like Twitter/Slack treat it as a GIF
- * file upload and other apps get a static fallback.
- */
-function writeGifToClipboard(filePath: string): boolean {
-  try {
-    const swift = `
-import Cocoa
-let filePath = CommandLine.arguments[1]
-let fileUrl = URL(fileURLWithPath: filePath)
-guard let gifData = try? Data(contentsOf: fileUrl) else { exit(1) }
-let image = NSImage(data: gifData)
-let pb = NSPasteboard.general
-pb.clearContents()
-pb.writeObjects([fileUrl as NSURL])
-pb.addTypes([NSPasteboard.PasteboardType("com.compuserve.gif"), .tiff], owner: nil)
-pb.setData(gifData, forType: NSPasteboard.PasteboardType("com.compuserve.gif"))
-if let tiff = image?.tiffRepresentation {
-    pb.setData(tiff, forType: .tiff)
-}
-`;
-    execFileSync('swift', ['-e', swift, filePath], { stdio: 'ignore', timeout: 10_000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
+import { platform } from '@platform';
 
 export interface ClipboardItem {
   id: string;
@@ -418,7 +389,7 @@ export function togglePinClipboardItem(id: string): ClipboardItem | null {
   return { ...item };
 }
 
-export function copyItemToClipboard(id: string): boolean {
+export async function copyItemToClipboard(id: string): Promise<boolean> {
   const item = clipboardHistory.find((i) => i.id === id);
   if (!item) return false;
 
@@ -431,7 +402,7 @@ export function copyItemToClipboard(id: string): boolean {
       if (ext === '.gif' && fs.existsSync(item.content)) {
         // Write GIF via NSPasteboard with both com.compuserve.gif (animated)
         // and public.tiff (static fallback) so GIF-aware apps get animation.
-        if (!writeGifToClipboard(item.content)) {
+        if (!(await platform.clipboard.writeGif(item.content))) {
           // Fallback: write raw GIF buffer only
           const gifData = fs.readFileSync(item.content);
           clipboard.clear();

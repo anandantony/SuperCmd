@@ -5,7 +5,12 @@
     "outDir": "./dist/main",
     "strict": true,
     "esModuleInterop": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@platform": ["src/platform/mac/index.ts"],
+      "@platform/*": ["src/platform/*"]
+    }
   },
   "include": ["src/main/**/*"]
 }

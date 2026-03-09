@@ -10,7 +10,8 @@
  * 3. Persistent disk cache so icons are only extracted once
  */
 
-import { app } from 'electron';
+import { app, shell } from 'electron';
+import { platform } from '@platform';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs';
@@ -911,40 +912,11 @@ async function discoverSystemSettings(): Promise<CommandInfo[]> {
 // ─── Command Execution ──────────────────────────────────────────────
 
 async function openAppByPath(appPath: string): Promise<void> {
-  await execAsync(`open "${appPath}"`);
+  await shell.openPath(appPath);
 }
 
 async function openSettingsPane(identifier: string): Promise<void> {
-  if (identifier.startsWith('com.apple.')) {
-    try {
-      await execAsync(`open "x-apple.systempreferences:${identifier}"`);
-      return;
-    } catch { /* fall through */ }
-  }
-
-  try {
-    await execAsync(
-      `open "x-apple.systempreferences:com.apple.settings.${identifier}"`
-    );
-    return;
-  } catch { /* fall through */ }
-
-  try {
-    await execAsync(
-      `open "x-apple.systempreferences:com.apple.preference.${identifier.toLowerCase()}"`
-    );
-    return;
-  } catch { /* fall through */ }
-
-  try {
-    await execAsync('open -a "System Settings"');
-  } catch {
-    try {
-      await execAsync('open -a "System Preferences"');
-    } catch (e) {
-      console.error('Could not open System Settings:', e);
-    }
-  }
+  await platform.system.openSettingsPane(identifier);
 }
 
 // ─── Public API ─────────────────────────────────────────────────────

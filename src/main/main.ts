@@ -13,6 +13,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
+import { platform } from '@platform';
 import { fork, type ChildProcess } from 'child_process';
 import { getAvailableCommands, executeCommand, invalidateCache } from './commands';
 import { loadSettings, saveSettings, setOAuthToken, getOAuthToken, removeOAuthToken } from './settings-store';
@@ -1561,96 +1562,7 @@ async function executeNativeWindowAdjustByAction(
     workArea?: { x: number; y: number; width: number; height: number } | null;
   }
 ): Promise<boolean | null> {
-  if (process.platform !== 'darwin') return null;
-  const normalizedAction = String(action || '').trim();
-  if (!normalizedAction) return null;
-  if (nativeWindowFineTuneSupport === false) return null;
-
-  const fsNative = require('fs');
-  const helperPath = getNativeBinaryPath('window-adjust');
-  const nativeAdjustTimeoutMs = app.isPackaged ? 1500 : 600;
-  if (nativeWindowFineTuneSupport === null && !fsNative.existsSync(helperPath)) {
-    nativeWindowFineTuneSupport = false;
-    return null;
-  }
-
-  try {
-    const { execFile } = require('child_process');
-    const args = [normalizedAction];
-    const hintedBundleId = String(targetHint?.bundleId || '').trim();
-    const hintedAppPath = String(targetHint?.appPath || '').trim();
-    const hintedWindowId = Math.trunc(Number(targetHint?.windowId));
-    const hintedWorkArea = cloneWorkArea(targetHint?.workArea || null);
-    if (hintedBundleId && hintedBundleId !== 'com.supercmd.app' && hintedBundleId !== 'com.supercmd') {
-      args.push('--bundle-id', hintedBundleId);
-    }
-    if (hintedAppPath && !hintedAppPath.includes('/SuperCmd.app')) {
-      args.push('--app-path', hintedAppPath);
-    }
-    if (Number.isFinite(hintedWindowId) && hintedWindowId > 0) {
-      args.push('--window-id', String(hintedWindowId));
-    }
-    if (hintedWorkArea) {
-      args.push(
-        '--area-x', String(hintedWorkArea.x),
-        '--area-y', String(hintedWorkArea.y),
-        '--area-width', String(hintedWorkArea.width),
-        '--area-height', String(hintedWorkArea.height)
-      );
-    }
-    const parsed = await new Promise<{ ok: boolean; error?: string } | null>((resolve) => {
-      execFile(
-        helperPath,
-        args,
-        { encoding: 'utf-8', timeout: nativeAdjustTimeoutMs },
-        (error: Error | null, stdout: string, _stderr: string) => {
-          const raw = String(stdout || '').trim();
-          if (!raw) {
-            const errorMessage = String((error as any)?.message || '');
-            if (errorMessage.includes('ENOENT')) {
-              nativeWindowFineTuneSupport = false;
-            } else if (errorMessage) {
-              console.warn(`[WindowManager] Native window helper failed (${normalizedAction}):`, errorMessage);
-            }
-            resolve(null);
-            return;
-          }
-          try {
-            const payloadLine = raw
-              .split(/\r?\n/)
-              .map((line) => String(line || '').trim())
-              .filter(Boolean)
-              .reverse()
-              .find((line) => line.startsWith('{') && line.endsWith('}'));
-            if (!payloadLine) {
-              resolve(null);
-              return;
-            }
-            const payload = JSON.parse(payloadLine);
-            if (typeof payload?.ok !== 'boolean') {
-              resolve(null);
-              return;
-            }
-            resolve({
-              ok: Boolean(payload.ok),
-              error: typeof payload?.error === 'string' ? payload.error : undefined,
-            });
-          } catch {
-            resolve(null);
-          }
-        }
-      );
-    });
-
-    if (!parsed) return null;
-    nativeWindowFineTuneSupport = true;
-    return parsed.ok;
-  } catch (error: any) {
-    if (String(error?.message || '').includes('ENOENT')) {
-      nativeWindowFineTuneSupport = false;
-    }
-    return null;
-  }
+  return await platform.windowManager.executeWindowAdjustByAction(action, targetHint);
 }
 
 async function executeNativeWindowFineTune(
@@ -2580,65 +2492,11 @@ async function promptForHomeFolderAccess(): Promise<{ requested: boolean; select
   }
 }
 
-async function requestMicrophoneAccessViaNative(prompt: boolean): Promise<MicrophonePermissionResult | null> {
-  if (process.platform !== 'darwin') return null;
-  const fs = require('fs');
-  const binaryPath = getNativeBinaryPath('microphone-access');
-  if (!fs.existsSync(binaryPath)) return null;
-
-  return await new Promise<MicrophonePermissionResult | null>((resolve) => {
-    const { spawn } = require('child_process');
-    const args = prompt ? ['--prompt'] : [];
-    const proc = spawn(binaryPath, args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-
-    proc.stdout.on('data', (chunk: Buffer | string) => {
-      stdout += String(chunk || '');
-    });
-    proc.stderr.on('data', (chunk: Buffer | string) => {
-      stderr += String(chunk || '');
-    });
-
-    proc.on('error', () => {
-      resolve(null);
-    });
-
-    proc.on('close', () => {
-      const lines = stdout
-        .split('\n')
-        .map((line: string) => line.trim())
-        .filter(Boolean);
-      for (let i = lines.length - 1; i >= 0; i -= 1) {
-        try {
-          const payload = JSON.parse(lines[i]);
-          const status = normalizePermissionStatus(payload?.status);
-          const granted = Boolean(payload?.granted) || status === 'granted';
-          const requested = Boolean(payload?.requested);
-          const canPrompt = typeof payload?.canPrompt === 'boolean'
-            ? Boolean(payload.canPrompt)
-            : status === 'not-determined' || status === 'unknown';
-          const result: MicrophonePermissionResult = {
-            granted,
-            requested,
-            status,
-            canPrompt,
-            error: granted
-              ? undefined
-              : String(payload?.error || '').trim() || (stderr.trim() || undefined),
-          };
-          resolve(result);
-          return;
-        } catch {}
-      }
-      resolve(null);
-    });
-  });
+async function requestMicrophoneAccessViaNative(prompt: boolean): Promise<import('@platform').MicrophonePermissionResult | null> {
+  return await platform.speech.requestMicrophoneAccess(prompt);
 }
 
-async function ensureMicrophoneAccess(prompt = true): Promise<MicrophonePermissionResult> {
+async function ensureMicrophoneAccess(prompt = true): Promise<import('@platform').MicrophonePermissionResult> {
   if (process.platform !== 'darwin') {
     return {
       granted: true,
@@ -10263,24 +10121,9 @@ return appURL's |path|() as text`,
   // Get default application for a file/URL
   ipcMain.handle('get-default-application', async (_event: any, filePath: string) => {
     try {
-      const { execSync } = require('child_process');
-      // Use Launch Services via AppleScript to find default app
-      const script = `
-        use framework "AppKit"
-        set fileURL to current application's NSURL's fileURLWithPath:"${filePath.replace(/"/g, '\\"')}"
-        set appURL to current application's NSWorkspace's sharedWorkspace()'s URLForApplicationToOpenURL:fileURL
-        if appURL is missing value then
-          error "No default application found"
-        end if
-        set appPath to appURL's |path|() as text
-        set appBundle to current application's NSBundle's bundleWithPath:appPath
-        set appName to (appBundle's infoDictionary()'s objectForKey:"CFBundleName") as text
-        set bundleId to (appBundle's bundleIdentifier()) as text
-        return appName & "|||" & appPath & "|||" & bundleId
-      `;
-      const result = execSync(`osascript -l AppleScript -e '${script.replace(/'/g, "'\"'\"'")}'`, { encoding: 'utf-8' }).trim();
-      const [name, appPath, bundleId] = result.split('|||');
-      return { name, path: appPath, bundleId };
+      const result = await platform.system.getDefaultApplication(filePath);
+      if (!result) throw new Error('No default application found');
+      return result;
     } catch (e: any) {
       console.error('get-default-application error:', e);
       throw new Error(`No default application found for: ${filePath}`);
@@ -10290,19 +10133,9 @@ return appURL's |path|() as text`,
   // Get frontmost application
   ipcMain.handle('get-frontmost-application', async () => {
     try {
-      const { execSync } = require('child_process');
-      const script = `
-        tell application "System Events"
-          set frontApp to first application process whose frontmost is true
-          set appName to name of frontApp
-          set appPath to POSIX path of (file of frontApp as alias)
-          set appId to bundle identifier of frontApp
-          return appName & "|||" & appPath & "|||" & appId
-        end tell
-      `;
-      const result = execSync(`osascript -e '${script.replace(/'/g, "'\"'\"'")}'`, { encoding: 'utf-8' }).trim();
-      const [name, appPath, bundleId] = result.split('|||');
-      return { name, path: appPath, bundleId };
+      const result = await platform.system.getFrontmostApplication();
+      if (!result) throw new Error('Not found');
+      return result;
     } catch (e) {
       return { name: 'SuperCmd', path: '', bundleId: 'com.supercmd' };
     }
@@ -10311,19 +10144,10 @@ return appURL's |path|() as text`,
   // Run AppleScript
   ipcMain.handle('run-applescript', async (_event: any, script: string) => {
     try {
-      const { spawnSync } = require('child_process');
-      const proc = spawnSync('/usr/bin/osascript', ['-l', 'AppleScript'], {
-        input: script,
-        encoding: 'utf-8',
-      });
-
-      if (proc.status !== 0) {
-        const stderr = (proc.stderr || '').trim() || 'AppleScript execution failed';
-        throw new Error(stderr);
+      if (typeof platform.system.runAppleScript !== 'function') {
+        throw new Error('AppleScript is not supported on this platform');
       }
-
-      const result = proc.stdout || '';
-      return result.trim();
+      return await platform.system.runAppleScript(script);
     } catch (e: any) {
       console.error('AppleScript error:', e);
       throw new Error(e?.message || 'AppleScript execution failed');
@@ -10588,12 +10412,12 @@ return appURL's |path|() as text`,
     return deleteClipboardItem(id);
   });
 
-  ipcMain.handle('clipboard-copy-item', (_event: any, id: string) => {
-    return copyItemToClipboard(id);
+  ipcMain.handle('clipboard-copy-item', async (_event: any, id: string) => {
+    return await copyItemToClipboard(id);
   });
 
   ipcMain.handle('clipboard-paste-item', async (_event: any, id: string) => {
-    const success = copyItemToClipboard(id);
+    const success = await copyItemToClipboard(id);
     if (!success) return false;
 
     return await hideAndPaste();
@@ -10680,40 +10504,10 @@ return appURL's |path|() as text`,
     setClipboardMonitorEnabled(enabled);
   });
 
-  // ── Helper: write a GIF file to macOS pasteboard with proper UTIs ──
-  // Uses Swift to access NSPasteboard directly and write:
-  //  1. File URL (public.file-url) — apps like Twitter/Slack/Discord detect
-  //     a .gif file and upload it with animation preserved.
-  //  2. Raw GIF data (com.compuserve.gif) — for apps that read image data.
-  //  3. TIFF fallback (public.tiff) — for apps that only support static images.
-  function writeGifToClipboard(filePath: string): boolean {
-    try {
-      const { execFileSync } = require('child_process') as typeof import('child_process');
-      const swift = `
-import Cocoa
-let filePath = CommandLine.arguments[1]
-let fileUrl = URL(fileURLWithPath: filePath)
-guard let gifData = try? Data(contentsOf: fileUrl) else { exit(1) }
-let image = NSImage(data: gifData)
-let pb = NSPasteboard.general
-pb.clearContents()
-pb.writeObjects([fileUrl as NSURL])
-pb.addTypes([NSPasteboard.PasteboardType("com.compuserve.gif"), .tiff], owner: nil)
-pb.setData(gifData, forType: NSPasteboard.PasteboardType("com.compuserve.gif"))
-if let tiff = image?.tiffRepresentation {
-    pb.setData(tiff, forType: .tiff)
-}
-`;
-      execFileSync('swift', ['-e', swift, filePath], { stdio: 'ignore', timeout: 10_000 });
-      return true;
-    } catch (e) {
-      console.error('writeGifToClipboard swift failed:', e);
-      return false;
-    }
-  }
+
 
   // Focus-safe clipboard APIs for extension/runtime shims.
-  ipcMain.handle('clipboard-write', (_event: any, payload: { text?: string; html?: string; file?: string }) => {
+  ipcMain.handle('clipboard-write', async (_event: any, payload: { text?: string; html?: string; file?: string }) => {
     try {
       const text = payload?.text || '';
       const html = payload?.html || '';
@@ -10755,7 +10549,7 @@ if let tiff = image?.tiffRepresentation {
               // public.tiff via NSPasteboard so GIF-aware apps get animation
               // and other apps get a static frame.
               if (ext === '.gif') {
-                if (writeGifToClipboard(normalizedFile)) return true;
+                if (await platform.clipboard.writeGif(normalizedFile)) return true;
               }
               const rawData = fs.readFileSync(normalizedFile);
               systemClipboard.clear();
@@ -11074,7 +10868,7 @@ if let tiff = image?.tiffRepresentation {
       const imageUti = IMAGE_EXTENSIONS[ext];
 
       if (ext === '.gif') {
-        writeGifToClipboard(normalizedFile);
+        await platform.clipboard.writeGif(normalizedFile);
       } else if (imageUti) {
         const rawData = fs.readFileSync(normalizedFile);
         systemClipboard.clear();

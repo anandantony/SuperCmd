@@ -11,6 +11,11 @@
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@platform": ["src/platform/mac/index.ts"],
+      "@platform/*": ["src/platform/*"]
+    }
   }
 }
 
